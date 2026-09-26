@@ -10,3 +10,4 @@ test/data/readywaitasset.js
 test/data/readywaitloader.js
 test/data/support/csp.js
 test/data/support/getComputedSupport.js
+test/run-qunit.js

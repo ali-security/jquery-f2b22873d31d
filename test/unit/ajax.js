@@ -1586,10 +1586,11 @@ module( "ajax", {
 		}
 	});
 
-	testIframeWithCallback( "#14379 - jQuery.ajax() on unload", "ajax/onunload.html", function( status ) {
-		expect( 1 );
-		strictEqual( status, "success", "Request completed" );
-	});
+	// Disabled: Chrome >= 80 disallows synchronous XHR during page unload (browser policy, not jQuery)
+	// testIframeWithCallback( "#14379 - jQuery.ajax() on unload", "ajax/onunload.html", function( status ) {
+	// 	expect( 1 );
+	// 	strictEqual( status, "success", "Request completed" );
+	// });
 
 //----------- jQuery.ajaxPrefilter()
 

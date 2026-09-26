@@ -1,3 +1,33 @@
 language: node_js
+dist: focal
 node_js:
 - '0.10'
+addons:
+  chrome: stable
+before_script:
+# Serve the repo root so /test/index.html, /dist/*.js and test/data/*.php resolve.
+# Use the image's phpenv PHP 8.3: focal's apt php7.4 multi-worker dev server garbles request
+# methods ("(null) /test/index.html"). 32 workers because fixtures such as core/dont_return.php
+# sleep up to 30s each and would otherwise starve concurrent iframe fixture loads into timeouts.
+- phpenv global 8.3
+- phpenv which php
+- '"$(phpenv which php)" --version'
+- PHP_CLI_SERVER_WORKERS=32 nohup "$(phpenv which php)" -S 127.0.0.1:8000 -t "$TRAVIS_BUILD_DIR" > "$HOME/php-server.log" 2>&1 &
+- for i in $(seq 1 30); do curl -sf -o /dev/null http://127.0.0.1:8000/test/index.html && break; sleep 1; done
+# Fails the job if the server never answered
+- curl -sfI http://127.0.0.1:8000/test/index.html
+script:
+# Lint + build dist/jquery.js and dist/jquery.min.js (loaded by the test suite)
+- npm test
+# Run the QUnit browser suite headlessly with a modern Node, outside the project's node 0.10 install
+- source "$HOME/.nvm/nvm.sh" && nvm install 18 && node --version && npm --version
+# puppeteer-core has no postinstall browser download; drive the Chrome installed by addons.chrome
+- PUPPETEER_SKIP_DOWNLOAD=1 npm install --prefix "$HOME/qunit-runner" --loglevel=http --no-audit --no-fund --no-update-notifier puppeteer-core@21
+# Pinned Chrome for Testing 121 (the build puppeteer@21 targets; the full suite was verified against it).
+# addons.chrome stays only to provide Chrome's system libraries.
+- curl -sSfL -o "$HOME/chrome-linux64.zip" https://storage.googleapis.com/chrome-for-testing-public/121.0.6167.85/linux64/chrome-linux64.zip
+- unzip -q "$HOME/chrome-linux64.zip" -d "$HOME/cft"
+- '"$HOME/cft/chrome-linux64/chrome" --version'
+- QUNIT_RUNNER_PREFIX="$HOME/qunit-runner" QUNIT_PUPPETEER_MODULE=puppeteer-core CHROME_PATH="$HOME/cft/chrome-linux64/chrome" node test/run-qunit.js http://127.0.0.1:8000/test/index.html
+after_failure:
+- cat "$HOME/php-server.log"

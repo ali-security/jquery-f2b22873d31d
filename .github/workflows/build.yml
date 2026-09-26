@@ -1,0 +1,103 @@
+name: build
+
+# Build-and-pack only: jQuery 1.11.1's tests run on Travis (.travis.yml).
+# Produces jquery-1.11.1.tgz matching the public npm tarball (packed with
+# npm 1.2.25 on node 0.10).
+
+on:
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      # dist/cdn is produced by jQuery's release script (build/release.js,
+      # makeReleaseCopies), which cannot run standalone; replicate its CDN
+      # copy step verbatim for version 1.11.1 (not a pre-release).
+      - name: Write CDN copy helper
+        run: |
+          cat > "$RUNNER_TEMP/make-cdn-copies.js" <<'EOF'
+          var fs = require("fs");
+          var version = "1.11.1";
+          var devFile = "dist/jquery.js",
+            minFile = "dist/jquery.min.js",
+            mapFile = "dist/jquery.min.map",
+            cdnFolder = "dist/cdn",
+            releaseFiles = {
+              "jquery-VER.js": devFile,
+              "jquery-VER.min.js": minFile,
+              "jquery-VER.min.map": mapFile,
+              "jquery.js": devFile,
+              "jquery.min.js": minFile,
+              "jquery.min.map": mapFile,
+              "jquery-latest.js": devFile,
+              "jquery-latest.min.js": minFile,
+              "jquery-latest.min.map": mapFile
+            };
+          Object.keys(releaseFiles).forEach(function (key) {
+            var text,
+              builtFile = releaseFiles[key],
+              unpathedFile = key.replace(/VER/g, version),
+              releaseFile = cdnFolder + "/" + unpathedFile;
+            if (/\.map$/.test(releaseFile)) {
+              text = fs.readFileSync(builtFile, "utf8")
+                .replace(/"file":"([^"]+)","sources":\["([^"]+)"\]/,
+                  "\"file\":\"" + unpathedFile.replace(/\.min\.map/, ".min.js") +
+                  "\",\"sources\":[\"" + unpathedFile.replace(/\.min\.map/, ".js") + "\"]");
+              fs.writeFileSync(releaseFile, text);
+            } else if (/\.min\.js$/.test(releaseFile)) {
+              text = fs.readFileSync(builtFile, "utf8")
+                .replace(/\/\/# sourceMappingURL=\S+/, "");
+              fs.writeFileSync(releaseFile, text);
+            } else {
+              fs.writeFileSync(releaseFile, fs.readFileSync(builtFile));
+            }
+            console.log("Created: " + releaseFile);
+          });
+          EOF
+
+      # actions/setup-node cannot provide node 0.10 and a node:0.10 job
+      # container breaks actions/checkout, so build inside docker on the host.
+      - name: Build and pack (node 0.10)
+        run: |
+          docker run --rm \
+            --user "$(id -u):$(id -g)" \
+            -e HOME=/tmp \
+            -v "$PWD":/src \
+            -v "$RUNNER_TEMP":/seal-tmp:ro \
+            -w /src \
+            node:0.10 bash -ec '
+              node --version
+              npm --version
+              # Resolve devDependencies as of the 1.11.1 release date.
+              npm config set registry https://time-machines-npm.sealsecurity.io/
+              npm config set //time-machines-npm.sealsecurity.io/:_authToken=2014-05-01T18:05:32.863000Z
+              # node 0.10 bundled CA store predates the registry certificate chain.
+              npm config set strict-ssl false
+              npm install
+              ./node_modules/.bin/grunt
+              mkdir -p dist/cdn
+              node /seal-tmp/make-cdn-copies.js
+              # Keep this CI-only workflow out of the tarball; the upstream
+              # .npmignore does not list .github.
+              rm -rf .github
+              npm pack
+            '
+
+      - name: Show package contents
+        run: |
+          tar tzvf jquery-1.11.1.tgz
+          ls -l dist dist/cdn
+          wc -c dist/*.js
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: npm-package
+          path: jquery-1.11.1.tgz
+          if-no-files-found: error
